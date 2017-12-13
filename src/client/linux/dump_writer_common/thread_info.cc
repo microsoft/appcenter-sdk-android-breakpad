@@ -178,7 +178,7 @@ void ThreadInfo::FillCPUContext(RawContextCPU* out) const {
   out->flt_save.data_offset = fpregs.rdp;
   out->flt_save.data_selector = 0;   // We don't have this.
   out->flt_save.mx_csr = fpregs.mxcsr;
-#if defined (__ANDROID__)
+#if defined (__ANDROID__) && !defined(__x86_64__)
   // Internal bug b/18097559
   out->flt_save.mx_csr_mask = fpregs.mxcsr_mask;
 #else
