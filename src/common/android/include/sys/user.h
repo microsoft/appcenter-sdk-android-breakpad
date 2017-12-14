@@ -115,7 +115,7 @@ struct user_fpregs_struct {
 
 #include_next <sys/user.h>
 
-#ifdef __i386__
+#if defined(__i386__) && !defined(__NDK_R16B__)
 #ifdef __cplusplus
 extern "C" {
 #endif  // __cplusplus
@@ -123,7 +123,7 @@ typedef struct user_fxsr_struct user_fpxregs_struct;
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus
-#endif  // __i386__
+#endif  // defined(__i386__) && !defined(__NDK_R16B__)
 
 #endif  // __mips__
 

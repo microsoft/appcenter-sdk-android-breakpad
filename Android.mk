@@ -57,6 +57,9 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE := breakpad_client
 
+LOCAL_CFLAGS := -D__NDK_R16B__
+LOCAL_CPPFLAGS := $(LOCAL_CFLAGS)
+
 LOCAL_CPP_EXTENSION := .cc
 
 # Breakpad uses inline ARM assembly that requires the library
