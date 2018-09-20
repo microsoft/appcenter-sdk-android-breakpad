@@ -44,16 +44,17 @@
 namespace google_breakpad {
 
 using std::dec;
-using std::endl;
 using std::hex;
 
 
 Module::Module(const string &name, const string &os,
-               const string &architecture, const string &id) :
+               const string &architecture, const string &id,
+               const string &code_id /* = "" */) :
     name_(name),
     os_(os),
     architecture_(architecture),
     id_(id),
+    code_id_(code_id),
     load_address_(0) { }
 
 Module::~Module() {
@@ -79,8 +80,36 @@ void Module::AddFunction(Function *function) {
   // FUNC lines must not hold an empty name, so catch the problem early if
   // callers try to add one.
   assert(!function->name.empty());
+
+  // FUNCs are better than PUBLICs as they come with sizes, so remove an extern
+  // with the same address if present.
+  Extern ext(function->address);
+  ExternSet::iterator it_ext = externs_.find(&ext);
+  if (it_ext == externs_.end() &&
+      architecture_ == "arm" &&
+      (function->address & 0x1) == 0) {
+    // ARM THUMB functions have bit 0 set. ARM64 does not have THUMB.
+    Extern arm_thumb_ext(function->address | 0x1);
+    it_ext = externs_.find(&arm_thumb_ext);
+  }
+  if (it_ext != externs_.end()) {
+    delete *it_ext;
+    externs_.erase(it_ext);
+  }
+#if _DEBUG
+  {
+    // There should be no other PUBLIC symbols that overlap with the function.
+    for (const Range& range : function->ranges) {
+      Extern debug_ext(range.address);
+      ExternSet::iterator it_debug = externs_.lower_bound(&ext);
+      assert(it_debug == externs_.end() ||
+             (*it_debug)->address >= range.address + range.size);
+    }
+  }
+#endif
+
   std::pair<FunctionSet::iterator,bool> ret = functions_.insert(function);
-  if (!ret.second) {
+  if (!ret.second && (*ret.first != function)) {
     // Free the duplicate that was not inserted because this Module
     // now owns it.
     delete function;
@@ -98,21 +127,10 @@ void Module::AddStackFrameEntry(StackFrameEntry *stack_frame_entry) {
 }
 
 void Module::AddExtern(Extern *ext) {
-  Function func;
-  func.name = ext->name;
-  func.address = ext->address;
-
-  // Since parsing debug section and public info are not necessarily
-  // mutually exclusive, check if the symbol has already been read
-  // as a function to avoid duplicates.
-  if (functions_.find(&func) == functions_.end()) {
-    std::pair<ExternSet::iterator,bool> ret = externs_.insert(ext);
-    if (!ret.second) {
-      // Free the duplicate that was not inserted because this Module
-      // now owns it.
-      delete ext;
-    }
-  } else {
+  std::pair<ExternSet::iterator,bool> ret = externs_.insert(ext);
+  if (!ret.second) {
+    // Free the duplicate that was not inserted because this Module
+    // now owns it.
     delete ext;
   }
 }
@@ -141,8 +159,7 @@ Module::File *Module::FindFile(const string &name) {
   FileByNameMap::iterator destiny = files_.lower_bound(&name);
   if (destiny == files_.end()
       || *destiny->first != name) {  // Repeated string comparison, boo hoo.
-    File *file = new File;
-    file->name = name;
+    File *file = new File(name);
     file->source_id = -1;
     destiny = files_.insert(destiny,
                             FileByNameMap::value_type(&file->name, file));
@@ -217,9 +234,13 @@ bool Module::WriteRuleMap(const RuleMap &rule_map, std::ostream &stream) {
 
 bool Module::Write(std::ostream &stream, SymbolData symbol_data) {
   stream << "MODULE " << os_ << " " << architecture_ << " "
-         << id_ << " " << name_ << endl;
+         << id_ << " " << name_ << "\n";
   if (!stream.good())
     return ReportError();
+
+  if (!code_id_.empty()) {
+    stream << "INFO CODE_ID " << code_id_ << "\n";
+  }
 
   if (symbol_data != ONLY_CFI) {
     AssignSourceIds();
@@ -229,7 +250,7 @@ bool Module::Write(std::ostream &stream, SymbolData symbol_data) {
          file_it != files_.end(); ++file_it) {
       File *file = file_it->second;
       if (file->source_id >= 0) {
-        stream << "FILE " << file->source_id << " " <<  file->name << endl;
+        stream << "FILE " << file->source_id << " " <<  file->name << "\n";
         if (!stream.good())
           return ReportError();
       }
@@ -239,24 +260,33 @@ bool Module::Write(std::ostream &stream, SymbolData symbol_data) {
     for (FunctionSet::const_iterator func_it = functions_.begin();
          func_it != functions_.end(); ++func_it) {
       Function *func = *func_it;
-      stream << "FUNC " << hex
-             << (func->address - load_address_) << " "
-             << func->size << " "
-             << func->parameter_size << " "
-             << func->name << dec << endl;
-      if (!stream.good())
-        return ReportError();
+      vector<Line>::iterator line_it = func->lines.begin();
+      for (auto range_it = func->ranges.cbegin();
+           range_it != func->ranges.cend(); ++range_it) {
+        stream << "FUNC " << hex
+               << (range_it->address - load_address_) << " "
+               << range_it->size << " "
+               << func->parameter_size << " "
+               << func->name << dec << "\n";
 
-      for (vector<Line>::iterator line_it = func->lines.begin();
-           line_it != func->lines.end(); ++line_it) {
-        stream << hex
-               << (line_it->address - load_address_) << " "
-               << line_it->size << " "
-               << dec
-               << line_it->number << " "
-               << line_it->file->source_id << endl;
         if (!stream.good())
           return ReportError();
+
+        while ((line_it != func->lines.end()) &&
+               (line_it->address >= range_it->address) &&
+               (line_it->address < (range_it->address + range_it->size))) {
+          stream << hex
+                 << (line_it->address - load_address_) << " "
+                 << line_it->size << " "
+                 << dec
+                 << line_it->number << " "
+                 << line_it->file->source_id << "\n";
+
+          if (!stream.good())
+            return ReportError();
+
+          ++line_it;
+        }
       }
     }
 
@@ -266,7 +296,7 @@ bool Module::Write(std::ostream &stream, SymbolData symbol_data) {
       Extern *ext = *extern_it;
       stream << "PUBLIC " << hex
              << (ext->address - load_address_) << " 0 "
-             << ext->name << dec << endl;
+             << ext->name << dec << "\n";
     }
   }
 
@@ -283,7 +313,7 @@ bool Module::Write(std::ostream &stream, SymbolData symbol_data) {
           || !WriteRuleMap(entry->initial_rules, stream))
         return ReportError();
 
-      stream << endl;
+      stream << "\n";
 
       // Write out this entry's delta rules as 'STACK CFI' records.
       for (RuleChangeMap::const_iterator delta_it = entry->rule_changes.begin();
@@ -294,7 +324,7 @@ bool Module::Write(std::ostream &stream, SymbolData symbol_data) {
             || !WriteRuleMap(delta_it->second, stream))
           return ReportError();
 
-        stream << endl;
+        stream << "\n";
       }
     }
   }

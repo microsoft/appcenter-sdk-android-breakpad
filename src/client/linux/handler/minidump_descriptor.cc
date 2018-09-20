@@ -36,14 +36,21 @@
 namespace google_breakpad {
 
 //static
-const MinidumpDescriptor::MicrodumpOnConsole kMicrodumpOnConsole = {};
+const MinidumpDescriptor::MicrodumpOnConsole
+    MinidumpDescriptor::kMicrodumpOnConsole = {};
 
 MinidumpDescriptor::MinidumpDescriptor(const MinidumpDescriptor& descriptor)
     : mode_(descriptor.mode_),
       fd_(descriptor.fd_),
       directory_(descriptor.directory_),
       c_path_(NULL),
-      size_limit_(descriptor.size_limit_) {
+      size_limit_(descriptor.size_limit_),
+      address_within_principal_mapping_(
+          descriptor.address_within_principal_mapping_),
+      skip_dump_if_principal_mapping_not_referenced_(
+          descriptor.skip_dump_if_principal_mapping_not_referenced_),
+      sanitize_stacks_(descriptor.sanitize_stacks_),
+      microdump_extra_info_(descriptor.microdump_extra_info_) {
   // The copy constructor is not allowed to be called on a MinidumpDescriptor
   // with a valid path_, as getting its c_path_ would require the heap which
   // can cause problems in compromised environments.
@@ -64,6 +71,12 @@ MinidumpDescriptor& MinidumpDescriptor::operator=(
     UpdatePath();
   }
   size_limit_ = descriptor.size_limit_;
+  address_within_principal_mapping_ =
+      descriptor.address_within_principal_mapping_;
+  skip_dump_if_principal_mapping_not_referenced_ =
+      descriptor.skip_dump_if_principal_mapping_not_referenced_;
+  sanitize_stacks_ = descriptor.sanitize_stacks_;
+  microdump_extra_info_ = descriptor.microdump_extra_info_;
   return *this;
 }
 

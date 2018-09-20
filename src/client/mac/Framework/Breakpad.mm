@@ -226,7 +226,6 @@ class Breakpad {
 
 //=============================================================================
 static BOOL IsDebuggerActive() {
-	return NO;
   BOOL result = NO;
   NSUserDefaults *stdDefaults = [NSUserDefaults standardUserDefaults];
 

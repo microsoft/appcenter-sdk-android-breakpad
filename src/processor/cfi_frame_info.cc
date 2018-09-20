@@ -43,7 +43,7 @@
 
 namespace google_breakpad {
 
-#ifdef _WIN32
+#ifdef _MSC_VER
 #define strtok_r strtok_s
 #endif
 
@@ -81,7 +81,7 @@ bool CFIFrameInfo::FindCallerRegs(const RegisterValueMap<V> &registers,
     working = registers;
     working[".cfa"] = cfa;
     if (!evaluator.EvaluateForValue(it->second, &value))
-      continue;	//NICKX: even though one register is not available as expected, let's continue for the rest
+      return false;
     (*caller_registers)[it->first] = value;
   }
 

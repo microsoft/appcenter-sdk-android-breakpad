@@ -35,7 +35,7 @@
 
 #include <atlcomcli.h>
 
-#include <hash_map>
+#include <unordered_map>
 #include <string>
 
 #include "common/windows/omap.h"
@@ -47,7 +47,7 @@ struct IDiaSymbol;
 namespace google_breakpad {
 
 using std::wstring;
-using stdext::hash_map;
+using std::unordered_map;
 
 // A structure that carries information that identifies a pdb file.
 struct PDBModuleInfo {
@@ -138,11 +138,12 @@ class PDBSourceLineWriter {
   bool PrintLines(IDiaEnumLineNumbers *lines);
 
   // Outputs a function address and name, followed by its source line list.
-  // block can be the same object as function, or it can be a reference
-  // to a code block that is lexically part of this function, but
-  // resides at a separate address.
-  // Returns true on success.
-  bool PrintFunction(IDiaSymbol *function, IDiaSymbol *block);
+  // block can be the same object as function, or it can be a reference to a
+  // code block that is lexically part of this function, but resides at a
+  // separate address. If has_multiple_symbols is true, this function's
+  // instructions correspond to multiple symbols. Returns true on success.
+  bool PrintFunction(IDiaSymbol *function, IDiaSymbol *block,
+                     bool has_multiple_symbols);
 
   // Outputs all functions as described above.  Returns true on success.
   bool PrintFunctions();
@@ -167,8 +168,10 @@ class PDBSourceLineWriter {
 
   // Outputs a single public symbol address and name, if the symbol corresponds
   // to a code address.  Returns true on success.  If symbol is does not
-  // correspond to code, returns true without outputting anything.
-  bool PrintCodePublicSymbol(IDiaSymbol *symbol);
+  // correspond to code, returns true without outputting anything. If
+  // has_multiple_symbols is true, the symbol corresponds to a code address and
+  // the instructions correspond to multiple symbols.
+  bool PrintCodePublicSymbol(IDiaSymbol *symbol, bool has_multiple_symbols);
 
   // Outputs a line identifying the PDB file that is being dumped, along with
   // its uuid and age.
@@ -192,7 +195,7 @@ class PDBSourceLineWriter {
 
   // Store this ID in the cache as a duplicate for this filename.
   void StoreDuplicateFileID(const wstring &file, DWORD id) {
-    hash_map<wstring, DWORD>::iterator iter = unique_files_.find(file);
+    unordered_map<wstring, DWORD>::iterator iter = unique_files_.find(file);
     if (iter != unique_files_.end()) {
       // map this id to the previously seen one
       file_ids_[id] = iter->second;
@@ -204,7 +207,7 @@ class PDBSourceLineWriter {
   // but different unique IDs. The cache attempts to coalesce these into
   // one ID per unique filename.
   DWORD GetRealFileID(DWORD id) {
-    hash_map<DWORD, DWORD>::iterator iter = file_ids_.find(id);
+    unordered_map<DWORD, DWORD>::iterator iter = file_ids_.find(id);
     if (iter == file_ids_.end())
       return id;
     return iter->second;
@@ -240,9 +243,9 @@ class PDBSourceLineWriter {
   // There may be many duplicate filenames with different IDs.
   // This maps from the DIA "unique ID" to a single ID per unique
   // filename.
-  hash_map<DWORD, DWORD> file_ids_;
+  unordered_map<DWORD, DWORD> file_ids_;
   // This maps unique filenames to file IDs.
-  hash_map<wstring, DWORD> unique_files_;
+  unordered_map<wstring, DWORD> unique_files_;
 
   // This is used for calculating post-transform symbol addresses and lengths.
   ImageMap image_map_;

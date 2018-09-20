@@ -39,8 +39,10 @@
 
 #include "common/using_std_string.h"
 #include "google_breakpad/common/breakpad_types.h"
-#include "google_breakpad/processor/system_info.h"
+#include "google_breakpad/processor/code_modules.h"
 #include "google_breakpad/processor/minidump.h"
+#include "google_breakpad/processor/system_info.h"
+#include "processor/linked_ptr.h"
 
 namespace google_breakpad {
 
@@ -89,7 +91,7 @@ enum ExploitabilityRating {
 
 class ProcessState {
  public:
-  ProcessState() : modules_(NULL) { Clear(); }
+  ProcessState() : modules_(NULL), unloaded_modules_(NULL) { Clear(); }
   ~ProcessState();
 
   // Resets the ProcessState to its default values
@@ -109,6 +111,10 @@ class ProcessState {
   }
   const SystemInfo* system_info() const { return &system_info_; }
   const CodeModules* modules() const { return modules_; }
+  const CodeModules* unloaded_modules() const { return unloaded_modules_; }
+  const vector<linked_ptr<const CodeModule> >* shrunk_range_modules() const {
+    return &shrunk_range_modules_;
+  }
   const vector<const CodeModule*>* modules_without_symbols() const {
     return &modules_without_symbols_;
   }
@@ -116,8 +122,7 @@ class ProcessState {
     return &modules_with_corrupt_symbols_;
   }
   ExploitabilityRating exploitability() const { return exploitability_; }
-	void PrintThreadStack(int thread_index, std::string const& cpu) const;
-	
+
  private:
   // MinidumpProcessor and MicrodumpProcessor are responsible for building
   // ProcessState objects.
@@ -173,6 +178,14 @@ class ProcessState {
   // ProcessState.
   const CodeModules *modules_;
 
+  // The modules that have been unloaded from the process represented by the
+  // ProcessState.
+  const CodeModules *unloaded_modules_;
+
+  // The modules which virtual address ranges were shrunk down due to
+  // virtual address conflicts.
+  vector<linked_ptr<const CodeModule> > shrunk_range_modules_;
+
   // The modules that didn't have symbols when the report was processed.
   vector<const CodeModule*> modules_without_symbols_;
 
@@ -181,7 +194,7 @@ class ProcessState {
 
   // The exploitability rating as determined by the exploitability
   // engine. When the exploitability engine is not enabled this
-  // defaults to EXPLOITABILITY_NONE.
+  // defaults to EXPLOITABILITY_NOT_ANALYZED.
   ExploitabilityRating exploitability_;
 };
 

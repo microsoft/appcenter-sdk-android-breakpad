@@ -196,8 +196,6 @@ SymbolSupplier::SymbolResult SimpleSymbolSupplier::GetSymbolFileAtPathFromRoot(
     BPLOG(INFO) << "No symbol file at " << path;
     return NOT_FOUND;
   }
-	
-	BPLOG(INFO) << "Load symbol file at " << path;
 
   *symbol_file = path;
   return FOUND;

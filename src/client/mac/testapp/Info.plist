@@ -2,12 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>BreakpadURL</key>
-	<string>http://localhost:1127</string>
-	<key>BreakpadInProcess</key>
-	<string>YES</string>
-	<key>BreakpadMinidumpLocation</key>
-	<string>/tmp</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
 	<key>CFBundleExecutable</key>
@@ -50,10 +44,10 @@
 	<string>Foo Bar Corp, Incorporated, LTD, LLC</string>
 	<key>BreakpadServerParameters</key>
 	<dict>
-		<key>Param1</key>
-		<string>Value1</string>
-		<key>Param2</key>
-		<string>Value2</string>
+	  <key>Param1</key>
+	  <string>Value1</string>
+	  <key>Param2</key>
+	  <string>Value2</string>
 	</dict>
 	<key>LSUIElement</key>
 	<string>1</string>

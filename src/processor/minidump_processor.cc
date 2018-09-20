@@ -30,11 +30,11 @@
 #include "google_breakpad/processor/minidump_processor.h"
 
 #include <assert.h>
-#include <stdio.h>
 
 #include <string>
 
 #include "common/scoped_ptr.h"
+#include "common/stdio_wrapper.h"
 #include "common/using_std_string.h"
 #include "google_breakpad/processor/call_stack.h"
 #include "google_breakpad/processor/minidump.h"
@@ -43,6 +43,7 @@
 #include "google_breakpad/processor/stack_frame_symbolizer.h"
 #include "processor/logging.h"
 #include "processor/stackwalker_x86.h"
+#include "processor/symbolic_constants_win.h"
 
 namespace google_breakpad {
 
@@ -50,7 +51,8 @@ MinidumpProcessor::MinidumpProcessor(SymbolSupplier *supplier,
                                      SourceLineResolverInterface *resolver)
     : frame_symbolizer_(new StackFrameSymbolizer(supplier, resolver)),
       own_frame_symbolizer_(true),
-      enable_exploitability_(false) {
+      enable_exploitability_(false),
+      enable_objdump_(false) {
 }
 
 MinidumpProcessor::MinidumpProcessor(SymbolSupplier *supplier,
@@ -58,14 +60,16 @@ MinidumpProcessor::MinidumpProcessor(SymbolSupplier *supplier,
                                      bool enable_exploitability)
     : frame_symbolizer_(new StackFrameSymbolizer(supplier, resolver)),
       own_frame_symbolizer_(true),
-      enable_exploitability_(enable_exploitability) {
+      enable_exploitability_(enable_exploitability),
+      enable_objdump_(false) {
 }
 
 MinidumpProcessor::MinidumpProcessor(StackFrameSymbolizer *frame_symbolizer,
                                      bool enable_exploitability)
     : frame_symbolizer_(frame_symbolizer),
       own_frame_symbolizer_(false),
-      enable_exploitability_(enable_exploitability) {
+      enable_exploitability_(enable_exploitability),
+      enable_objdump_(false) {
   assert(frame_symbolizer_);
 }
 
@@ -122,8 +126,26 @@ ProcessResult MinidumpProcessor::Process(
   // Put a copy of the module list into ProcessState object.  This is not
   // necessarily a MinidumpModuleList, but it adheres to the CodeModules
   // interface, which is all that ProcessState needs to expose.
-  if (module_list)
+  if (module_list) {
     process_state->modules_ = module_list->Copy();
+    process_state->shrunk_range_modules_ =
+        process_state->modules_->GetShrunkRangeModules();
+    for (unsigned int i = 0;
+         i < process_state->shrunk_range_modules_.size();
+         i++) {
+      linked_ptr<const CodeModule> module =
+          process_state->shrunk_range_modules_[i];
+      BPLOG(INFO) << "The range for module " << module->code_file()
+                  << " was shrunk down by " << HexString(
+                      module->shrink_down_delta()) << " bytes. ";
+    }
+  }
+
+  MinidumpUnloadedModuleList *unloaded_module_list =
+      dump->GetUnloadedModuleList();
+  if (unloaded_module_list) {
+    process_state->unloaded_modules_ = unloaded_module_list->Copy();
+  }
 
   MinidumpMemoryList *memory_list = dump->GetMemoryList();
   if (memory_list) {
@@ -246,6 +268,7 @@ ProcessResult MinidumpProcessor::Process(
                                        context,
                                        thread_memory,
                                        process_state->modules_,
+                                       process_state->unloaded_modules_,
                                        frame_symbolizer_));
 
     scoped_ptr<CallStack> stack(new CallStack());
@@ -263,6 +286,7 @@ ProcessResult MinidumpProcessor::Process(
       // one bad thread.
       BPLOG(ERROR) << "No stackwalker for " << thread_string;
     }
+    stack->set_tid(thread_id);
     process_state->threads_.push_back(stack.release());
     process_state->thread_memory_regions_.push_back(thread_memory);
   }
@@ -288,7 +312,9 @@ ProcessResult MinidumpProcessor::Process(
   // rating.
   if (enable_exploitability_) {
     scoped_ptr<Exploitability> exploitability(
-        Exploitability::ExploitabilityForPlatform(dump, process_state));
+        Exploitability::ExploitabilityForPlatform(dump,
+                                                  process_state,
+                                                  enable_objdump_));
     // The engine will be null if the platform is not supported
     if (exploitability != NULL) {
       process_state->exploitability_ = exploitability->CheckExploitability();
@@ -509,13 +535,17 @@ bool MinidumpProcessor::GetCPUInfo(Minidump *dump, SystemInfo *info) {
       break;
     }
 
-    case MD_CPU_ARCHITECTURE_ARM64: {
+    case MD_CPU_ARCHITECTURE_ARM64_OLD: {
       info->cpu = "arm64";
       break;
     }
 
     case MD_CPU_ARCHITECTURE_MIPS: {
       info->cpu = "mips";
+      break;
+    }
+    case MD_CPU_ARCHITECTURE_MIPS64: {
+      info->cpu = "mips64";
       break;
     }
 
@@ -705,7 +735,7 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
               if (raw_system_info->processor_architecture ==
                   MD_CPU_ARCHITECTURE_ARM ||
                   raw_system_info->processor_architecture ==
-                  MD_CPU_ARCHITECTURE_ARM64) {
+                  MD_CPU_ARCHITECTURE_ARM64_OLD) {
                 switch (exception_flags) {
                   case MD_EXCEPTION_CODE_MAC_ARM_DA_ALIGN:
                     reason.append("EXC_ARM_DA_ALIGN");
@@ -735,6 +765,19 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
                     BPLOG(INFO) << "Unknown exception reason " << reason;
                     break;
                 }
+              } else if (raw_system_info->processor_architecture ==
+                         MD_CPU_ARCHITECTURE_X86 ||
+                         raw_system_info->processor_architecture ==
+                         MD_CPU_ARCHITECTURE_AMD64) {
+                switch (exception_flags) {
+                  case MD_EXCEPTION_CODE_MAC_X86_GENERAL_PROTECTION_FAULT:
+                    reason.append("EXC_I386_GPFLT");
+                    break;
+                  default:
+                    reason.append(flags_string);
+                    BPLOG(INFO) << "Unknown exception reason " << reason;
+                    break;
+                }
               } else {
                 reason.append(flags_string);
                 BPLOG(INFO) << "Unknown exception reason " << reason;
@@ -746,7 +789,7 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
           reason = "EXC_BAD_INSTRUCTION / ";
           switch (raw_system_info->processor_architecture) {
             case MD_CPU_ARCHITECTURE_ARM:
-            case MD_CPU_ARCHITECTURE_ARM64: {
+            case MD_CPU_ARCHITECTURE_ARM64_OLD: {
               switch (exception_flags) {
                 case MD_EXCEPTION_CODE_MAC_ARM_UNDEFINED:
                   reason.append("EXC_ARM_UNDEFINED");
@@ -785,25 +828,26 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
               }
               break;
             }
+            case MD_CPU_ARCHITECTURE_AMD64:
             case MD_CPU_ARCHITECTURE_X86: {
               switch (exception_flags) {
                 case MD_EXCEPTION_CODE_MAC_X86_INVALID_OPERATION:
                   reason.append("EXC_I386_INVOP");
                   break;
                 case MD_EXCEPTION_CODE_MAC_X86_INVALID_TASK_STATE_SEGMENT:
-                  reason.append("EXC_INVTSSFLT");
+                  reason.append("EXC_I386_INVTSSFLT");
                   break;
                 case MD_EXCEPTION_CODE_MAC_X86_SEGMENT_NOT_PRESENT:
-                  reason.append("EXC_SEGNPFLT");
+                  reason.append("EXC_I386_SEGNPFLT");
                   break;
                 case MD_EXCEPTION_CODE_MAC_X86_STACK_FAULT:
-                  reason.append("EXC_STKFLT");
+                  reason.append("EXC_I386_STKFLT");
                   break;
                 case MD_EXCEPTION_CODE_MAC_X86_GENERAL_PROTECTION_FAULT:
-                  reason.append("EXC_GPFLT");
+                  reason.append("EXC_I386_GPFLT");
                   break;
                 case MD_EXCEPTION_CODE_MAC_X86_ALIGNMENT_FAULT:
-                  reason.append("EXC_ALIGNFLT");
+                  reason.append("EXC_I386_ALIGNFLT");
                   break;
                 default:
                   reason.append(flags_string);
@@ -849,6 +893,7 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
                   break;
                 case MD_EXCEPTION_CODE_MAC_PPC_ALTIVEC_ASSIST:
                   reason.append("EXC_PPC_ALTIVECASSIST");
+                  break;
                 default:
                   reason.append(flags_string);
                   BPLOG(INFO) << "Unknown exception reason " << reason;
@@ -856,6 +901,7 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
               }
               break;
             }
+            case MD_CPU_ARCHITECTURE_AMD64:
             case MD_CPU_ARCHITECTURE_X86: {
               switch (exception_flags) {
                 case MD_EXCEPTION_CODE_MAC_X86_DIV:
@@ -926,7 +972,7 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
           reason = "EXC_BREAKPOINT / ";
           switch (raw_system_info->processor_architecture) {
             case MD_CPU_ARCHITECTURE_ARM:
-            case MD_CPU_ARCHITECTURE_ARM64: {
+            case MD_CPU_ARCHITECTURE_ARM64_OLD: {
               switch (exception_flags) {
                 case MD_EXCEPTION_CODE_MAC_ARM_DA_ALIGN:
                   reason.append("EXC_ARM_DA_ALIGN");
@@ -956,6 +1002,7 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
               }
               break;
             }
+            case MD_CPU_ARCHITECTURE_AMD64:
             case MD_CPU_ARCHITECTURE_X86: {
               switch (exception_flags) {
                 case MD_EXCEPTION_CODE_MAC_X86_SGL:
@@ -989,6 +1036,9 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
           reason = "EXC_RPC_ALERT / ";
           reason.append(flags_string);
           break;
+        case MD_EXCEPTION_MAC_SIMULATED:
+          reason = "Simulated Exception";
+          break;
       }
       break;
     }
@@ -1015,8 +1065,8 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
           // For EXCEPTION_ACCESS_VIOLATION, Windows puts the address that
           // caused the fault in exception_information[1].
           // exception_information[0] is 0 if the violation was caused by
-          // an attempt to read data and 1 if it was an attempt to write
-          // data.
+          // an attempt to read data, 1 if it was an attempt to write data,
+          // and 8 if this was a data execution violation.
           // This information is useful in addition to the code address, which
           // will be present in the crash thread's instruction field anyway.
           if (raw_exception->exception_record.number_parameters >= 1) {
@@ -1047,7 +1097,48 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
           }
           break;
         case MD_EXCEPTION_CODE_WIN_IN_PAGE_ERROR:
-          reason = "EXCEPTION_IN_PAGE_ERROR";
+          // For EXCEPTION_IN_PAGE_ERROR, Windows puts the address that
+          // caused the fault in exception_information[1].
+          // exception_information[0] is 0 if the violation was caused by
+          // an attempt to read data, 1 if it was an attempt to write data,
+          // and 8 if this was a data execution violation.
+          // exception_information[2] contains the underlying NTSTATUS code,
+          // which is the explanation for why this error occured.
+          // This information is useful in addition to the code address, which
+          // will be present in the crash thread's instruction field anyway.
+          if (raw_exception->exception_record.number_parameters >= 1) {
+            MDInPageErrorTypeWin av_type =
+                static_cast<MDInPageErrorTypeWin>
+                (raw_exception->exception_record.exception_information[0]);
+            switch (av_type) {
+              case MD_IN_PAGE_ERROR_WIN_READ:
+                reason = "EXCEPTION_IN_PAGE_ERROR_READ";
+                break;
+              case MD_IN_PAGE_ERROR_WIN_WRITE:
+                reason = "EXCEPTION_IN_PAGE_ERROR_WRITE";
+                break;
+              case MD_IN_PAGE_ERROR_WIN_EXEC:
+                reason = "EXCEPTION_IN_PAGE_ERROR_EXEC";
+                break;
+              default:
+                reason = "EXCEPTION_IN_PAGE_ERROR";
+                break;
+            }
+          } else {
+            reason = "EXCEPTION_IN_PAGE_ERROR";
+          }
+          if (address &&
+              raw_exception->exception_record.number_parameters >= 2) {
+            *address =
+                raw_exception->exception_record.exception_information[1];
+          }
+          if (raw_exception->exception_record.number_parameters >= 3) {
+            uint32_t ntstatus =
+                static_cast<uint32_t>
+                (raw_exception->exception_record.exception_information[2]);
+            reason.append(" / ");
+            reason.append(NTStatusToString(ntstatus));
+          }
           break;
         case MD_EXCEPTION_CODE_WIN_INVALID_HANDLE:
           reason = "EXCEPTION_INVALID_HANDLE";
@@ -1097,6 +1188,9 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
         case MD_EXCEPTION_CODE_WIN_STACK_OVERFLOW:
           reason = "EXCEPTION_STACK_OVERFLOW";
           break;
+        case MD_EXCEPTION_CODE_WIN_BAD_FUNCTION_TABLE:
+          reason = "EXCEPTION_BAD_FUNCTION_TABLE";
+          break;
         case MD_EXCEPTION_CODE_WIN_POSSIBLE_DEADLOCK:
           reason = "EXCEPTION_POSSIBLE_DEADLOCK";
           break;
@@ -1106,8 +1200,14 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
         case MD_EXCEPTION_CODE_WIN_HEAP_CORRUPTION:
           reason = "EXCEPTION_HEAP_CORRUPTION";
           break;
+        case MD_EXCEPTION_OUT_OF_MEMORY:
+          reason = "Out of Memory";
+          break;
         case MD_EXCEPTION_CODE_WIN_UNHANDLED_CPP_EXCEPTION:
           reason = "Unhandled C++ Exception";
+          break;
+        case MD_EXCEPTION_CODE_WIN_SIMULATED:
+          reason = "Simulated Exception";
           break;
         default:
           BPLOG(INFO) << "Unknown exception reason " << reason;
@@ -1118,6 +1218,8 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
 
     case MD_OS_ANDROID:
     case MD_OS_LINUX: {
+      char flags_string[11];
+      snprintf(flags_string, sizeof(flags_string), "0x%08x", exception_flags);
       switch (exception_code) {
         case MD_EXCEPTION_CODE_LIN_SIGHUP:
           reason = "SIGHUP";
@@ -1129,7 +1231,37 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
           reason = "SIGQUIT";
           break;
         case MD_EXCEPTION_CODE_LIN_SIGILL:
-          reason = "SIGILL";
+          reason = "SIGILL / ";
+          switch (exception_flags) {
+            case MD_EXCEPTION_FLAG_LIN_ILL_ILLOPC:
+              reason.append("ILL_ILLOPC");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_ILL_ILLOPN:
+              reason.append("ILL_ILLOPN");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_ILL_ILLADR:
+              reason.append("ILL_ILLADR");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_ILL_ILLTRP:
+              reason.append("ILL_ILLTRP");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_ILL_PRVOPC:
+              reason.append("ILL_PRVOPC");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_ILL_PRVREG:
+              reason.append("ILL_PRVREG");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_ILL_COPROC:
+              reason.append("ILL_COPROC");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_ILL_BADSTK:
+              reason.append("ILL_BADSTK");
+              break;
+            default:
+              reason.append(flags_string);
+              BPLOG(INFO) << "Unknown exception reason " << reason;
+              break;
+          }
           break;
         case MD_EXCEPTION_CODE_LIN_SIGTRAP:
           reason = "SIGTRAP";
@@ -1138,10 +1270,61 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
           reason = "SIGABRT";
           break;
         case MD_EXCEPTION_CODE_LIN_SIGBUS:
-          reason = "SIGBUS";
+          reason = "SIGBUS / ";
+          switch (exception_flags) {
+            case MD_EXCEPTION_FLAG_LIN_BUS_ADRALN:
+              reason.append("BUS_ADALN");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_BUS_ADRERR:
+              reason.append("BUS_ADRERR");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_BUS_OBJERR:
+              reason.append("BUS_OBJERR");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_BUS_MCEERR_AR:
+              reason.append("BUS_MCEERR_AR");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_BUS_MCEERR_AO:
+              reason.append("BUS_MCEERR_AO");
+              break;
+            default:
+              reason.append(flags_string);
+              BPLOG(INFO) << "Unknown exception reason " << reason;
+              break;
+          }
           break;
         case MD_EXCEPTION_CODE_LIN_SIGFPE:
-          reason = "SIGFPE";
+          reason = "SIGFPE / ";
+          switch (exception_flags) {
+            case MD_EXCEPTION_FLAG_LIN_FPE_INTDIV:
+              reason.append("FPE_INTDIV");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_FPE_INTOVF:
+              reason.append("FPE_INTOVF");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_FPE_FLTDIV:
+              reason.append("FPE_FLTDIV");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_FPE_FLTOVF:
+              reason.append("FPE_FLTOVF");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_FPE_FLTUND:
+              reason.append("FPE_FLTUND");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_FPE_FLTRES:
+              reason.append("FPE_FLTRES");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_FPE_FLTINV:
+              reason.append("FPE_FLTINV");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_FPE_FLTSUB:
+              reason.append("FPE_FLTSUB");
+              break;
+            default:
+              reason.append(flags_string);
+              BPLOG(INFO) << "Unknown exception reason " << reason;
+              break;
+          }
           break;
         case MD_EXCEPTION_CODE_LIN_SIGKILL:
           reason = "SIGKILL";
@@ -1150,7 +1333,25 @@ string MinidumpProcessor::GetCrashReason(Minidump *dump, uint64_t *address) {
           reason = "SIGUSR1";
           break;
         case MD_EXCEPTION_CODE_LIN_SIGSEGV:
-          reason = "SIGSEGV";
+          reason = "SIGSEGV /";
+          switch (exception_flags) {
+            case MD_EXCEPTION_FLAG_LIN_SEGV_MAPERR:
+              reason.append("SEGV_MAPERR");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_SEGV_ACCERR:
+              reason.append("SEGV_ACCERR");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_SEGV_BNDERR:
+              reason.append("SEGV_BNDERR");
+              break;
+            case MD_EXCEPTION_FLAG_LIN_SEGV_PKUERR:
+              reason.append("SEGV_PKUERR");
+              break;
+            default:
+              reason.append(flags_string);
+              BPLOG(INFO) << "Unknown exception reason " << reason;
+              break;
+          }
           break;
         case MD_EXCEPTION_CODE_LIN_SIGUSR2:
           reason = "SIGUSR2";

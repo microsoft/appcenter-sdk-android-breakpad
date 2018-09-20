@@ -54,10 +54,9 @@ static Module::Function *generate_duplicate_function(const string &name) {
   const Module::Address DUP_SIZE = 0x200b26e605f99071LL;
   const Module::Address DUP_PARAMETER_SIZE = 0xf14ac4fed48c4a99LL;
 
-  Module::Function *function = new(Module::Function);
-  function->name = name;
-  function->address = DUP_ADDRESS;
-  function->size = DUP_SIZE;
+  Module::Function *function = new Module::Function(name, DUP_ADDRESS);
+  Module::Range range(DUP_ADDRESS, DUP_SIZE);
+  function->ranges.push_back(range);
   function->parameter_size = DUP_PARAMETER_SIZE;
   return function;
 }
@@ -66,6 +65,7 @@ static Module::Function *generate_duplicate_function(const string &name) {
 #define MODULE_OS "os-name"
 #define MODULE_ARCH "architecture"
 #define MODULE_ID "id-string"
+#define MODULE_CODE_ID "code-id-string"
 
 TEST(Write, Header) {
   stringstream s;
@@ -76,15 +76,25 @@ TEST(Write, Header) {
                contents.c_str());
 }
 
+TEST(Write, HeaderCodeId) {
+  stringstream s;
+  Module m(MODULE_NAME, MODULE_OS, MODULE_ARCH, MODULE_ID, MODULE_CODE_ID);
+  m.Write(s, ALL_SYMBOL_DATA);
+  string contents = s.str();
+  EXPECT_STREQ("MODULE os-name architecture id-string name with spaces\n"
+               "INFO CODE_ID code-id-string\n",
+               contents.c_str());
+}
+
 TEST(Write, OneLineFunc) {
   stringstream s;
   Module m(MODULE_NAME, MODULE_OS, MODULE_ARCH, MODULE_ID);
 
   Module::File *file = m.FindFile("file_name.cc");
-  Module::Function *function = new(Module::Function);
-  function->name = "function_name";
-  function->address = 0xe165bf8023b9d9abLL;
-  function->size = 0x1e4bb0eb1cbf5b09LL;
+  Module::Function *function = new Module::Function(
+      "function_name", 0xe165bf8023b9d9abLL);
+  Module::Range range(0xe165bf8023b9d9abLL, 0x1e4bb0eb1cbf5b09LL);
+  function->ranges.push_back(range);
   function->parameter_size = 0x772beee89114358aLL;
   Module::Line line = { 0xe165bf8023b9d9abLL, 0x1e4bb0eb1cbf5b09LL,
                         file, 67519080 };
@@ -110,10 +120,10 @@ TEST(Write, RelativeLoadAddress) {
   Module::File *file2 = m.FindFile("filename-a.cc");
 
   // A function.
-  Module::Function *function = new(Module::Function);
-  function->name = "A_FLIBBERTIJIBBET::a_will_o_the_wisp(a clown)";
-  function->address = 0xbec774ea5dd935f3LL;
-  function->size = 0x2922088f98d3f6fcLL;
+  Module::Function *function = new Module::Function(
+      "A_FLIBBERTIJIBBET::a_will_o_the_wisp(a clown)", 0xbec774ea5dd935f3LL);
+  Module::Range range(0xbec774ea5dd935f3LL, 0x2922088f98d3f6fcLL);
+  function->ranges.push_back(range);
   function->parameter_size = 0xe5e9aa008bd5f0d0LL;
 
   // Some source lines.  The module should not sort these.
@@ -168,16 +178,16 @@ TEST(Write, OmitUnusedFiles) {
   Module::File *file3 = m.FindFile("filename3");
 
   // Create a function.
-  Module::Function *function = new(Module::Function);
-  function->name = "function_name";
-  function->address = 0x9b926d464f0b9384LL;
-  function->size = 0x4f524a4ba795e6a6LL;
+  Module::Function *function = new Module::Function(
+      "function_name", 0x9b926d464f0b9384LL);
+  Module::Range range(0x9b926d464f0b9384LL, 0x4f524a4ba795e6a6LL);
+  function->ranges.push_back(range);
   function->parameter_size = 0xbbe8133a6641c9b7LL;
 
   // Source files that refer to some files, but not others.
-  Module::Line line1 = { 0x595fa44ebacc1086LL, 0x1e1e0191b066c5b3LL,
+  Module::Line line1 = { 0xab415089485e1a20LL, 0x126e3124979291f2LL,
                          file1, 137850127 };
-  Module::Line line2 = { 0x401ce8c8a12d25e3LL, 0x895751c41b8d2ce2LL,
+  Module::Line line2 = { 0xb2675b5c3c2ed33fLL, 0x1df77f5551dbd68cLL,
                          file3, 28113549 };
   function->lines.push_back(line1);
   function->lines.push_back(line2);
@@ -204,8 +214,8 @@ TEST(Write, OmitUnusedFiles) {
                "FILE 1 filename3\n"
                "FUNC 9b926d464f0b9384 4f524a4ba795e6a6 bbe8133a6641c9b7"
                " function_name\n"
-               "595fa44ebacc1086 1e1e0191b066c5b3 137850127 0\n"
-               "401ce8c8a12d25e3 895751c41b8d2ce2 28113549 1\n",
+               "ab415089485e1a20 126e3124979291f2 137850127 0\n"
+               "b2675b5c3c2ed33f 1df77f5551dbd68c 28113549 1\n",
                contents.c_str());
 }
 
@@ -217,10 +227,10 @@ TEST(Write, NoCFI) {
   Module::File *file1 = m.FindFile("filename.cc");
 
   // A function.
-  Module::Function *function = new(Module::Function);
-  function->name = "A_FLIBBERTIJIBBET::a_will_o_the_wisp(a clown)";
-  function->address = 0xbec774ea5dd935f3LL;
-  function->size = 0x2922088f98d3f6fcLL;
+  Module::Function *function = new Module::Function(
+      "A_FLIBBERTIJIBBET::a_will_o_the_wisp(a clown)", 0xbec774ea5dd935f3LL);
+  Module::Range range(0xbec774ea5dd935f3LL, 0x2922088f98d3f6fcLL);
+  function->ranges.push_back(range);
   function->parameter_size = 0xe5e9aa008bd5f0d0LL;
 
   // Some source lines.  The module should not sort these.
@@ -260,16 +270,16 @@ TEST(Construct, AddFunctions) {
   Module m(MODULE_NAME, MODULE_OS, MODULE_ARCH, MODULE_ID);
 
   // Two functions.
-  Module::Function *function1 = new(Module::Function);
-  function1->name = "_without_form";
-  function1->address = 0xd35024aa7ca7da5cLL;
-  function1->size = 0x200b26e605f99071LL;
+  Module::Function *function1 = new Module::Function(
+      "_without_form", 0xd35024aa7ca7da5cLL);
+  Module::Range r1(0xd35024aa7ca7da5cLL, 0x200b26e605f99071LL);
+  function1->ranges.push_back(r1);
   function1->parameter_size = 0xf14ac4fed48c4a99LL;
 
-  Module::Function *function2 = new(Module::Function);
-  function2->name = "_and_void";
-  function2->address = 0x2987743d0b35b13fLL;
-  function2->size = 0xb369db048deb3010LL;
+  Module::Function *function2 = new Module::Function(
+      "_and_void", 0x2987743d0b35b13fLL);
+  Module::Range r2(0x2987743d0b35b13fLL, 0xb369db048deb3010LL);
+  function2->ranges.push_back(r2);
   function2->parameter_size = 0x938e556cb5a79988LL;
 
   // Put them in a vector.
@@ -443,11 +453,9 @@ TEST(Construct, Externs) {
   Module m(MODULE_NAME, MODULE_OS, MODULE_ARCH, MODULE_ID);
 
   // Two externs.
-  Module::Extern *extern1 = new(Module::Extern);
-  extern1->address = 0xffff;
+  Module::Extern *extern1 = new Module::Extern(0xffff);
   extern1->name = "_abc";
-  Module::Extern *extern2 = new(Module::Extern);
-  extern2->address = 0xaaaa;
+  Module::Extern *extern2 = new Module::Extern(0xaaaa);
   extern2->name = "_xyz";
 
   m.AddExtern(extern1);
@@ -470,11 +478,9 @@ TEST(Construct, DuplicateExterns) {
   Module m(MODULE_NAME, MODULE_OS, MODULE_ARCH, MODULE_ID);
 
   // Two externs.
-  Module::Extern *extern1 = new(Module::Extern);
-  extern1->address = 0xffff;
+  Module::Extern *extern1 = new Module::Extern(0xffff);
   extern1->name = "_xyz";
-  Module::Extern *extern2 = new(Module::Extern);
-  extern2->address = 0xffff;
+  Module::Extern *extern2 = new Module::Extern(0xffff);
   extern2->name = "_abc";
 
   m.AddExtern(extern1);
@@ -486,5 +492,75 @@ TEST(Construct, DuplicateExterns) {
   EXPECT_STREQ("MODULE " MODULE_OS " " MODULE_ARCH " "
                MODULE_ID " " MODULE_NAME "\n"
                "PUBLIC ffff 0 _xyz\n",
+               contents.c_str());
+}
+
+// If there exists an extern and a function at the same address, only write
+// out the FUNC entry.
+TEST(Construct, FunctionsAndExternsWithSameAddress) {
+  stringstream s;
+  Module m(MODULE_NAME, MODULE_OS, MODULE_ARCH, MODULE_ID);
+
+  // Two externs.
+  Module::Extern* extern1 = new Module::Extern(0xabc0);
+  extern1->name = "abc";
+  Module::Extern* extern2 = new Module::Extern(0xfff0);
+  extern2->name = "xyz";
+
+  m.AddExtern(extern1);
+  m.AddExtern(extern2);
+
+  Module::Function* function = new Module::Function("_xyz", 0xfff0);
+  Module::Range range(0xfff0, 0x10);
+  function->ranges.push_back(range);
+  function->parameter_size = 0;
+  m.AddFunction(function);
+
+  m.Write(s, ALL_SYMBOL_DATA);
+  string contents = s.str();
+
+  EXPECT_STREQ("MODULE " MODULE_OS " " MODULE_ARCH " "
+               MODULE_ID " " MODULE_NAME "\n"
+               "FUNC fff0 10 0 _xyz\n"
+               "PUBLIC abc0 0 abc\n",
+               contents.c_str());
+}
+
+// If there exists an extern and a function at the same address, only write
+// out the FUNC entry. For ARM THUMB, the extern that comes from the ELF
+// symbol section has bit 0 set.
+TEST(Construct, FunctionsAndThumbExternsWithSameAddress) {
+  stringstream s;
+  Module m(MODULE_NAME, MODULE_OS, "arm", MODULE_ID);
+
+  // Two THUMB externs.
+  Module::Extern* thumb_extern1 = new Module::Extern(0xabc1);
+  thumb_extern1->name = "thumb_abc";
+  Module::Extern* thumb_extern2 = new Module::Extern(0xfff1);
+  thumb_extern2->name = "thumb_xyz";
+
+  Module::Extern* arm_extern1 = new Module::Extern(0xcc00);
+  arm_extern1->name = "arm_func";
+
+  m.AddExtern(thumb_extern1);
+  m.AddExtern(thumb_extern2);
+  m.AddExtern(arm_extern1);
+
+  // The corresponding function from the DWARF debug data have the actual
+  // address.
+  Module::Function* function = new Module::Function("_thumb_xyz", 0xfff0);
+  Module::Range range(0xfff0, 0x10);
+  function->ranges.push_back(range);
+  function->parameter_size = 0;
+  m.AddFunction(function);
+
+  m.Write(s, ALL_SYMBOL_DATA);
+  string contents = s.str();
+
+  EXPECT_STREQ("MODULE " MODULE_OS " arm "
+               MODULE_ID " " MODULE_NAME "\n"
+               "FUNC fff0 10 0 _thumb_xyz\n"
+               "PUBLIC abc1 0 thumb_abc\n"
+               "PUBLIC cc00 0 arm_func\n",
                contents.c_str());
 }
