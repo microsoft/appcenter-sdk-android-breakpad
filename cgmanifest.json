@@ -1,41 +1,42 @@
 {
-    "Registrations":[ 
-        {
-            "component": { 
-                "type": "git", 
-                "git": { 
-                "repositoryUrl": "https://chromium.googlesource.com/linux-syscall-support", 
-                "commitHash": "a89bf7903f3169e6bc7b8efc10a73a7571de21cf" 
-                }
-            }
-        },
-        {
-            "component": { 
-                "type": "git", 
-                "git": { 
-                "repositoryUrl": "https://github.com/google/googletest.git", 
-                "commitHash": "ec44c6c1675c25b9827aacd08c02433cccde7780" 
-                }
-            }
-        },
-        {
-            "component": { 
-                "type": "git", 
-                "git": { 
-                "repositoryUrl": "https://github.com/google/protobuf.git", 
-                "commitHash": "cb6dd4ef5f82e41e06179dcd57d3b1d9246ad6ac" 
-                }
-            }
-        },
-        {
-            "component": { 
-                "type": "git", 
-                "git": { 
-                "repositoryUrl": "https://chromium.googlesource.com/external/gyp/", 
-                "commitHash": "324dd166b7c0b39d513026fa52d6280ac6d56770" 
-                }
-            }
+  "$schema": "https://json.schemastore.org/component-detection-manifest.json",
+  "Registrations": [
+    {
+      "component": {
+        "type": "git",
+        "git": {
+          "repositoryUrl": "https://chromium.googlesource.com/linux-syscall-support",
+          "commitHash": "a89bf7903f3169e6bc7b8efc10a73a7571de21cf"
         }
-    ],
-    "Version": 1
+      }
+    },
+    {
+      "component": {
+        "type": "git",
+        "git": {
+          "repositoryUrl": "https://github.com/google/googletest.git",
+          "commitHash": "ec44c6c1675c25b9827aacd08c02433cccde7780"
+        }
+      }
+    },
+    {
+      "component": {
+        "type": "git",
+        "git": {
+          "repositoryUrl": "https://github.com/google/protobuf.git",
+          "commitHash": "cb6dd4ef5f82e41e06179dcd57d3b1d9246ad6ac"
+        }
+      }
+    },
+    {
+      "component": {
+        "type": "git",
+        "git": {
+          "repositoryUrl": "https://chromium.googlesource.com/external/gyp/",
+          "commitHash": "324dd166b7c0b39d513026fa52d6280ac6d56770"
+        }
+      }
+    }
+  ],
+  "Version": 1
 }
